@@ -46,13 +46,32 @@ Worker pool (isolates heavy imports and native crashes from the async loop):
 from mediapreview.pool import start_preview_workers, shutdown_preview_workers
 ```
 
+One-shot CLI (works with the base install, no worker extra needed):
+
+```bash
+mediapreview photo.jpg -o preview.avif        # or: python -m mediapreview ...
+mediapreview doc.pdf -q 70 --maxsize 1024     # needs the matching backend extra
+```
+
 ## OnlyOffice Docker bootstrap
 
 A patched OnlyOffice image (configurable converter worker count) ships as
 package data and can be built/started with:
 
-```python
-from mediapreview.office import setup_docker
-
-setup_docker()  # builds + runs "onlyoffice-mediapreview" on port 8988
+```bash
+mediapreview oosetup    # builds + runs "onlyoffice-mediapreview" on port 8988
 ```
+
+Container name and port are optional positional args:
+`mediapreview oosetup [name] [port]`.
+
+`oosetup` logs progress to stderr and prints exactly one line on stdout:
+
+```
+ONLYOFFICE_JWT_SECRET=<token>
+```
+
+If `ONLYOFFICE_JWT_SECRET` is already set in the environment it is used as-is
+(and echoed back); otherwise a random secret is generated. Persist the token
+wherever your deployment keeps its configuration and export it for later runs
+— the caller owns the secret, mediapreview does not store it.

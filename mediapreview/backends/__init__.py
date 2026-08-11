@@ -51,6 +51,10 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
             return process_image(path, quality=quality, maxsize=maxsize)
     except ValueError as e:
         return None, PreviewResponse(ok=False, backend=backend, error=str(e))
+    except ImportError as e:
+        # Missing optional extra — expected, so a plain message, no traceback.
+        logger.error("Preview dispatch failed for %s: %s", path, e)  # noqa: TRY400
+        return None, PreviewResponse(ok=False, backend=backend, error=str(e))
     except Exception as e:
         logger.exception("Preview dispatch failed for %s", path)
         return None, PreviewResponse(ok=False, backend=backend, error=str(e))

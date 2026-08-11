@@ -12,7 +12,13 @@ from pathlib import Path
 from time import perf_counter
 
 import msgspec
-from blake3 import blake3
+
+try:
+    from blake3 import blake3
+except ImportError as e:  # pragma: no cover - optional worker extra
+    raise ImportError(
+        "The worker pool requires the 'worker' extra: pip install mediapreview[worker]"
+    ) from e
 
 from mediapreview.formats import (
     expected_backend as _expected_preview_backend,

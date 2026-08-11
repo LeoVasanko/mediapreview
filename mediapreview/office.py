@@ -10,6 +10,8 @@ Environment requirements:
       reachable from the container (usually the docker bridge IP).
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -153,13 +155,19 @@ def log_reachable_info() -> None:
         logger.warning("OnlyOffice probe failed%s", suffix)
 
 
-def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> int:
+def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str:
     """Build and run the patched OnlyOffice Docker image.
 
     Uses ONLYOFFICE_JWT_SECRET if set, otherwise generates a random secret.
+    Returns the secret used, so the caller is responsible for persisting it
+    (the CLI prints it as `ONLYOFFICE_JWT_SECRET=<token>`).
     The Docker build context ships inside the package at `mediapreview/docker`.
     """
-    secret = _get_jwt_secret() or secrets.token_hex(16)
+    if secret := _get_jwt_secret():
+        logger.info("Using OnlyOffice JWT secret from ONLYOFFICE_JWT_SECRET")
+    else:
+        secret = secrets.token_hex(16)
+        logger.info("Generated a random OnlyOffice JWT secret")
     docker_dir = Path(__file__).parent / "docker"
     if not docker_dir.is_dir():
         raise FileNotFoundError(
@@ -190,12 +198,12 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> int
         "unless-stopped",
         name,
     ]
-    logger.info("%s", " ".join(run_cmd))
+    logger.info("%s", " ".join(run_cmd).replace(secret, "<redacted>"))
     result = subprocess.run(run_cmd, check=False, shell=False)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError("Failed to start OnlyOffice container")
     logger.info("OnlyOffice is running on http://localhost:%d", port)
-    return 0
+    return secret
 
 
 async def is_available_async(request_timeout: float = 2.0) -> bool:

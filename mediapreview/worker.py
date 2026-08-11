@@ -25,8 +25,16 @@ import sys
 from pathlib import Path
 
 import msgspec
-import tracerite
-from blake3 import blake3
+
+try:
+    import tracerite
+    from blake3 import blake3
+except ImportError:  # pragma: no cover - optional worker extra
+    sys.stderr.write(
+        "mediapreview worker requires the 'worker' extra:"
+        " pip install mediapreview[worker]\n"
+    )
+    sys.exit(1)
 
 from mediapreview.backends import dispatch
 from mediapreview.protocol import PreviewRequest, PreviewResponse

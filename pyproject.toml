@@ -9,9 +9,13 @@ description = "Low-level media preview converters and a worker pool framework"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "docopt-ng>=0.9.0",
     "msgspec>=0.19.0",
     "pyvips[binary]>=3.1.1",
 ]
+
+[project.scripts]
+mediapreview = "mediapreview.__main__:main"
 
 [project.optional-dependencies]
 worker = [
