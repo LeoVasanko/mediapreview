@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "mediapreview"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Low-level media preview converters and a worker pool framework"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,6 +39,8 @@ standard = [
     "mediapreview[video]",
     "mediapreview[office]",
 ]
+
+[dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=0.25.0",
@@ -46,6 +48,9 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mediapreview"]
