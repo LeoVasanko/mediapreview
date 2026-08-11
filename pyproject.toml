@@ -62,14 +62,11 @@ target-version = "py311"
 select = ["ALL"]
 ignore = [
     "COM812",
-    "ISC001",
     "ANN001",
     "ANN002",
-    "ANN003",
     "ANN201",
     "ANN202",
     "ANN204",
-    "ANN205",
     "BLE001",
     "C901",
     "CPY",
@@ -94,14 +91,13 @@ ignore = [
     "INP001",
     "PLR0911",
     "PLR0912",
-    "PLR0913",
     "PLR0915",
     "PLR2004",
     "PLW0603",
     "TRY003",
 ]
 isort.known-first-party = ["mediapreview"]
-per-file-ignores."tests/*" = ["S", "ANN", "D", "INP", "PLR2004", "ARG001", "SLF001"]
+per-file-ignores."tests/*" = ["S", "ARG001", "SLF001"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
