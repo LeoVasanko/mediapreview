@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mediapreview"
 dynamic = ["version"]
-description = "Low-level media preview converters and a worker pool framework"
+description = "Fast media preview images of photos, videos, PDFs and office documents."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
