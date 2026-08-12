@@ -7,6 +7,18 @@ name = "mediapreview"
 dynamic = ["version"]
 description = "Fast media preview images of photos, videos, PDFs and office documents."
 readme = "README.md"
+authors = [
+    { name = "Leo Vasanko" },
+]
+maintainers = [
+    { name = "Leo Vasanko" },
+]
+keywords = ["thumbnail", "pdf", "docx", "heic", "avif", "image", "office"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: Public Domain",
+    "License :: OSI Approved :: MIT License",
+]
 requires-python = ">=3.11"
 dependencies = [
     "docopt-ng>=0.9.0",
@@ -39,6 +51,10 @@ standard = [
     "mediapreview[video]",
     "mediapreview[office]",
 ]
+
+[project.urls]
+Homepage = "https://git.zi.fi/LeoVasanko/mediapreview"
+Repository = "https://github.com/LeoVasanko/mediapreview"
 
 [dependency-groups]
 dev = [
