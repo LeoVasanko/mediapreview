@@ -92,9 +92,11 @@ class PreviewTimeoutError(PreviewError):
         *,
         timeout_seconds: float = 0.0,
         backend: str | None = None,
+        fetched: bool | None = None,
     ):
         super().__init__(message, short, backend=backend)
         self.timeout_seconds = timeout_seconds
+        self.fetched = fetched
 
 
 class PreviewCancelledError(PreviewError):
@@ -170,12 +172,21 @@ def backend_error(backend: str, message: str) -> PreviewBackendError:
     )
 
 
-def preview_timeout_error(backend: str, timeout_seconds: float) -> PreviewTimeoutError:
+def preview_timeout_error(
+    backend: str, timeout_seconds: float, fetched: bool | None = None
+) -> PreviewTimeoutError:
+    log = f"{backend.capitalize()} preview timed out after {timeout_seconds}s"
+    if fetched is not None:
+        # OnlyOffice: whether it ever downloaded the input file from our
+        # callback server distinguishes network/callback failures from a
+        # stalled conversion.
+        log += " (input file fetched)" if fetched else " (input file never fetched)"
     return PreviewTimeoutError(
-        f"{backend.capitalize()} preview timed out after {timeout_seconds}s",
+        log,
         "timeout",
         backend=backend,
         timeout_seconds=timeout_seconds,
+        fetched=fetched,
     )
 
 

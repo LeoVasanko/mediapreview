@@ -2,16 +2,16 @@
 
 Usage:
   mediapreview <path> [-o OUTPUT] [-q QUALITY] [--maxsize N] [--maxzoom Z]
-  mediapreview oosetup [<name>] [<port>]
+  mediapreview oosetup [<name>]
   mediapreview (-h | --help)
 
 Generate an AVIF preview for a media file (one-shot, in-process), or set up
-the bundled OnlyOffice container.
+the bundled OnlyOffice container (isolated network, reachable from the host
+at its fixed container IP).
 
 Arguments:
   <path>  media file to preview
   <name>  container name [default: onlyoffice-mediapreview]
-  <port>  container host port [default: 8988]
 
 Options:
   -o OUTPUT    output .avif file (default: write AVIF bytes to stdout)
@@ -43,7 +43,7 @@ def _configure_logging() -> None:
     logging.getLogger("pyvips").setLevel(logging.WARNING)
 
 
-def _oosetup(name: str, port: int) -> None:
+def _oosetup(name: str) -> None:
     try:
         # Lazy import: keeps the base CLI free of office-extra concerns.
         from mediapreview.office import setup_docker  # noqa: PLC0415
@@ -52,7 +52,7 @@ def _oosetup(name: str, port: int) -> None:
         sys.exit(1)
     try:
         # Logs go to stderr; stdout carries only the secret line below.
-        secret = setup_docker(name=name, port=port)
+        secret = setup_docker(name=name)
     except Exception as e:
         sys.stderr.write(f"error: OnlyOffice setup failed: {e}\n")
         sys.exit(1)
@@ -102,13 +102,8 @@ def main() -> None:
     # by the <path> pattern if it came second. Dispatch it before parsing;
     # the main help above still documents both modes.
     if sys.argv[1:2] == ["oosetup"]:
-        args = docopt(
-            "Usage:\n  mediapreview oosetup [<name>] [<port>]", argv=sys.argv[1:]
-        )
-        _oosetup(
-            args["<name>"] or "onlyoffice-mediapreview",
-            int(args["<port>"] or 8988),
-        )
+        args = docopt("Usage:\n  mediapreview oosetup [<name>]", argv=sys.argv[1:])
+        _oosetup(args["<name>"] or "onlyoffice-mediapreview")
         return
     _preview(docopt(__doc__))
 

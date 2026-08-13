@@ -49,8 +49,11 @@ logger = logging.getLogger(__name__)
 
 # Isolated docker network for the OnlyOffice container: internal-only (no
 # outbound internet), the container can only reach the host on this bridge.
+# Docker discards published ports on internal networks, so the container is
+# reached at its fixed IP instead of a published localhost port.
 OO_NETWORK = "oonet"
 OO_SUBNET = "172.30.0.0/24"
+OO_CONTAINER_IP = "172.30.0.2"
 
 # ---------------------------------------------------------------------------
 # Configuration helpers
@@ -62,10 +65,16 @@ _httpx_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_onlyoffice_url() -> str:
-    return os.environ.get(
-        "ONLYOFFICE_URL",
-        os.environ.get("ONLYOFFICE_CISTA_URL", "http://localhost:8988"),
-    )
+    if url := os.environ.get(
+        "ONLYOFFICE_URL", os.environ.get("ONLYOFFICE_CISTA_URL")
+    ):
+        return url
+    # When the isolated network exists, the container is at its fixed IP and
+    # no localhost port is published (Docker discards ports on internal
+    # networks). Otherwise assume a legacy setup with a published port.
+    if _docker_network_gateway(OO_NETWORK):
+        return f"http://{OO_CONTAINER_IP}"
+    return "http://localhost:8988"
 
 
 def _get_jwt_secret() -> str:
@@ -190,12 +199,14 @@ def log_reachable_info() -> None:
         logger.warning("OnlyOffice probe failed%s", suffix)
 
 
-def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str:
+def setup_docker(name: str = "onlyoffice-mediapreview") -> str:
     """Build and run the patched OnlyOffice Docker image.
 
-    Uses ONLYOFFICE_JWT_SECRET if set, otherwise generates a random secret.
-    Returns the secret used, so the caller is responsible for persisting it
-    (the CLI prints it as `ONLYOFFICE_JWT_SECRET=<token>`).
+    The container runs on an isolated internal network (OO_NETWORK) with no
+    outbound internet and no published ports; the host reaches it at
+    OO_CONTAINER_IP. Uses ONLYOFFICE_JWT_SECRET if set, otherwise generates a
+    random secret. Returns the secret used, so the caller is responsible for
+    persisting it (the CLI prints it as `ONLYOFFICE_JWT_SECRET=<token>`).
     The Docker build context ships inside the package at `mediapreview/docker`.
     """
     if secret := _get_jwt_secret():
@@ -239,10 +250,10 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str
         "docker",
         "run",
         "-d",
-        "-p",
-        f"{port}:80",
         "--network",
         OO_NETWORK,
+        "--ip",
+        OO_CONTAINER_IP,
         "-e",
         f"JWT_SECRET={secret}",
         "-e",
@@ -257,7 +268,9 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str
     result = subprocess.run(run_cmd, check=False, shell=False)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError("Failed to start OnlyOffice container")
-    logger.info("OnlyOffice is running on http://localhost:%d", port)
+    # Docker discards published ports on internal networks, so the container
+    # is reached at its fixed IP; no localhost port is exposed.
+    logger.info("OnlyOffice is running on http://%s", OO_CONTAINER_IP)
     logger.info(
         "Callback host for file downloads: %s", _docker_network_gateway(OO_NETWORK)
     )
@@ -317,7 +330,9 @@ async def is_available_cached() -> bool:
 
 class _QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args) -> None:
-        pass
+        # Any request logged here means a client (OnlyOffice) connected to
+        # fetch the file; record it for timeout diagnostics.
+        self.server.oo_fetched = True
 
 
 def _get_free_port() -> int:
@@ -334,6 +349,7 @@ def _serve_file_temporarily(file_path: Path):
 
     handler = partial(_QuietHandler, directory=directory)
     httpd = socketserver.TCPServer(("0.0.0.0", port), handler)  # noqa: S104
+    httpd.oo_fetched = False
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
 
@@ -402,7 +418,9 @@ async def convert_to_png_async(
             )
             response.raise_for_status()
         except httpx.TimeoutException as e:
-            raise preview_timeout_error("onlyoffice", request_timeout) from e
+            raise preview_timeout_error(
+                "onlyoffice", request_timeout, fetched=httpd.oo_fetched
+            ) from e
         except httpx.HTTPStatusError as e:
             raise onlyoffice_http_error(e.response.status_code) from e
         except httpx.RequestError as e:
