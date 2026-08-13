@@ -50,9 +50,11 @@ logger = logging.getLogger(__name__)
 # Isolated docker network for the OnlyOffice container: internal-only (no
 # outbound internet), the container can only reach the host on this bridge.
 # Docker discards published ports on internal networks, so the container is
-# reached at its fixed IP instead of a published localhost port.
+# reached at its fixed IP instead of a published localhost port. The host is
+# always the first address of the pinned subnet (the bridge gateway).
 OO_NETWORK = "oonet"
 OO_SUBNET = "172.30.0.0/24"
+OO_GATEWAY = "172.30.0.1"
 OO_CONTAINER_IP = "172.30.0.2"
 
 # ---------------------------------------------------------------------------
@@ -77,57 +79,16 @@ def _get_jwt_secret() -> str:
     return os.environ.get("ONLYOFFICE_JWT_SECRET", "")
 
 
-def _docker_network_gateway(network: str) -> str | None:
-    """Return the host-side gateway IP of a docker network, or None."""
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "network",
-                "inspect",
-                network,
-                "--format",
-                "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-        gateway = result.stdout.strip()
-        if result.returncode == 0 and gateway:
-            return gateway
-    except Exception:
-        logger.debug("Failed to inspect docker network %s", network)
-    return None
-
-
 @lru_cache(maxsize=1)
 def _get_callback_host() -> str:
-    """Return the host IP that OnlyOffice (in Docker) can use to reach us."""
+    """Return the host IP that OnlyOffice (in Docker) can use to reach us.
+
+    The host is always the gateway of the pinned oonet subnet; no detection
+    is needed (the cista service account may not have docker CLI access).
+    """
     if host := os.environ.get("ONLYOFFICE_CALLBACK_HOST"):
         return host
-    # Prefer the gateway of the isolated network setup_docker() creates —
-    # this is the network the container is actually attached to.
-    if gateway := _docker_network_gateway(OO_NETWORK):
-        return gateway
-    # Fall back to the default docker bridge IP
-    try:
-        result = subprocess.run(
-            ["/sbin/ip", "-4", "addr", "show", "docker0"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-        for line in result.stdout.splitlines():
-            if "inet " in line:
-                parts = line.strip().split()
-                addr_part = parts[1]  # e.g. 172.17.0.1/16
-                return addr_part.split("/")[0]
-    except Exception:
-        logger.debug("Failed to auto-detect docker bridge IP")
-    return "127.0.0.1"
+    return OO_GATEWAY
 
 
 # ---------------------------------------------------------------------------
@@ -267,9 +228,7 @@ def setup_docker(name: str = "onlyoffice-mediapreview") -> str:
     # Docker discards published ports on internal networks, so the container
     # is reached at its fixed IP; no localhost port is exposed.
     logger.info("OnlyOffice is running on http://%s", OO_CONTAINER_IP)
-    logger.info(
-        "Callback host for file downloads: %s", _docker_network_gateway(OO_NETWORK)
-    )
+    logger.info("Callback host for file downloads: %s", OO_GATEWAY)
     return secret
 
 
