@@ -30,6 +30,14 @@ from pathlib import Path
 from time import perf_counter
 from urllib.parse import quote
 
+from mediapreview.exceptions import (
+    onlyoffice_error_from_code,
+    onlyoffice_http_error,
+    onlyoffice_no_fileurl_error,
+    onlyoffice_unavailable_error,
+    preview_timeout_error,
+)
+
 try:
     import httpx
     import jwt
@@ -45,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 _httpx_client: httpx.AsyncClient | None = None
+_httpx_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_onlyoffice_url() -> str:
@@ -82,35 +91,27 @@ def _get_callback_host() -> str:
     return "127.0.0.1"
 
 
-def onlyoffice_error_short_text(detail: str) -> str:
-    """Short human-readable label for an OnlyOffice failure, for log annotation."""
-    if detail.startswith("OnlyOffice conversion error:"):
-        code = detail.rsplit(":", 1)[-1].strip()
-        return {
-            "-8": "onlyoffice jwt error",
-            "-4": "onlyoffice input error",
-            "-2": "onlyoffice timeout error",
-            "-1": "onlyoffice unknown error",
-        }.get(code, f"onlyoffice {code} error")
-    if "OnlyOffice response did not contain FileUrl" in detail:
-        return "onlyoffice no-fileurl error"
-    return "onlyoffice error"
-
-
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Async HTTP client
 # ---------------------------------------------------------------------------
 
 
 def get_httpx_client() -> httpx.AsyncClient:
-    """Return the shared async HTTP client for OnlyOffice requests."""
+    """Return the shared async HTTP client for OnlyOffice requests.
+
+    The client is recreated if the running event loop changes, because an
+    ``httpx.AsyncClient`` is bound to the loop that created it.
+    """
     if httpx is None:
         raise ImportError(
             "OnlyOffice integration requires the 'office' extra: pip install mediapreview[office]"
         )
-    global _httpx_client
-    if _httpx_client is None:
+    global _httpx_client, _httpx_client_loop
+    current_loop = asyncio.get_running_loop()
+    if _httpx_client is None or _httpx_client_loop is not current_loop:
         _httpx_client = httpx.AsyncClient()
+        _httpx_client_loop = current_loop
     return _httpx_client
 
 
@@ -330,26 +331,34 @@ async def convert_to_png_async(file_path: Path, request_timeout: float = 5.0) ->
             headers["Authorization"] = token
 
         t_start = perf_counter()
-        response = await client.post(
-            convert_url,
-            content=json.dumps(payload).encode(),
-            headers=headers,
-            timeout=request_timeout,
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                convert_url,
+                content=json.dumps(payload).encode(),
+                headers=headers,
+                timeout=request_timeout,
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException as e:
+            raise preview_timeout_error("onlyoffice", request_timeout) from e
+        except httpx.HTTPStatusError as e:
+            raise onlyoffice_http_error(e.response.status_code) from e
+        except httpx.RequestError as e:
+            raise onlyoffice_unavailable_error(_get_onlyoffice_url()) from e
         body = response.content
         t_end = perf_counter()
 
         # Parse XML response
         text = body.decode("utf-8", errors="replace")
         if "<Error>" in text:
-            code = "unknown"
-            if "<Error>" in text and "</Error>" in text:
+            code = None
+            if "</Error>" in text:
                 code = text.split("<Error>")[1].split("</Error>")[0]
-            raise RuntimeError(f"OnlyOffice conversion error: {code}")
+            raise onlyoffice_error_from_code(code)
 
         if "<FileUrl>" not in text:
-            raise RuntimeError("OnlyOffice response did not contain FileUrl")
+            snippet = text if len(text) <= 200 else text[:200] + "..."
+            raise onlyoffice_no_fileurl_error(snippet)
 
         file_url = text.split("<FileUrl>")[1].split("</FileUrl>")[0]
         file_url = file_url.replace("&amp;", "&")
@@ -357,8 +366,17 @@ async def convert_to_png_async(file_path: Path, request_timeout: float = 5.0) ->
         logger.debug("OnlyOffice converted in %.2fs: %s", t_end - t_start, file_url)
 
         # Download converted PNG
-        png_response = await client.get(file_url, timeout=request_timeout)
-        png_response.raise_for_status()
+        try:
+            png_response = await client.get(file_url, timeout=request_timeout)
+            png_response.raise_for_status()
+        except httpx.TimeoutException as e:
+            raise preview_timeout_error("onlyoffice", request_timeout) from e
+        except httpx.HTTPStatusError as e:
+            raise onlyoffice_http_error(e.response.status_code) from e
+        except httpx.RequestError as e:
+            # The converted file lives on the OO server, so a request failure here
+            # usually means OO itself could not be reached after conversion.
+            raise onlyoffice_unavailable_error(_get_onlyoffice_url()) from e
         return png_response.content
     finally:
         await asyncio.to_thread(httpd.shutdown)
@@ -385,7 +403,7 @@ class OOConversionManager:
     async def convert(self, filepath: Path) -> bytes:
         """Return PNG bytes for *filepath*, deduplicating concurrent requests."""
         if not await is_available_cached():
-            raise RuntimeError("OnlyOffice server not reachable")
+            raise onlyoffice_unavailable_error(_get_onlyoffice_url())
         stat = await asyncio.to_thread(filepath.stat)
         key = f"{filepath}:{stat.st_mtime_ns}"
 

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import pickle
 import signal
 import struct
 import sys
@@ -20,6 +21,13 @@ except ImportError as e:  # pragma: no cover - optional worker extra
         "The worker pool requires the 'worker' extra: pip install mediapreview[worker]"
     ) from e
 
+from mediapreview.exceptions import (
+    PreviewError,
+    PreviewTimeoutError,
+    backend_error,
+    preview_cancelled_error,
+    preview_timeout_error,
+)
 from mediapreview.formats import (
     expected_backend as _expected_preview_backend,
 )
@@ -35,7 +43,6 @@ from mediapreview.protocol import PreviewRequest, PreviewResponse
 __all__ = [
     "PREVIEW_TIMEOUT",
     "PreviewError",
-    "PreviewPoolClosedError",
     "PreviewTimeoutError",
     "generate_office_preview",
     "is_previewable_path",
@@ -47,39 +54,26 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-class PreviewTimeoutError(Exception):
-    """Raised when the preview subprocess exceeds PREVIEW_TIMEOUT."""
-
-    def __init__(self, message: str, *, backend: str | None = None):
-        super().__init__(message)
-        self.backend = backend
-
-
-class PreviewError(Exception):
-    """Raised when the preview subprocess exits with a non-zero status."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        stderr: str | None = None,
-        backend: str | None = None,
-    ):
-        super().__init__(message)
-        self.stderr = stderr
-        self.backend = backend
-
-
-class PreviewPoolClosedError(PreviewError):
-    """The preview worker pool has been shut down."""
-
-
 class WorkerChecksumError(Exception):
     """Raised when worker response checksum does not match the packet."""
 
 
 class WorkerProtocolError(Exception):
     """Raised when worker response packet is malformed."""
+
+
+def _reraise_worker_error(resp: PreviewResponse, payload: bytes) -> None:
+    """Re-raise the exception the worker sent back in the payload, if any.
+
+    The payload is pickled by our own worker processes (same trust domain), so
+    the original exception type arrives intact on the caller side. Falls back
+    to a plain PreviewBackendError built from the error message.
+    """
+    if payload:
+        exc = pickle.loads(payload)  # noqa: S301 - trusted: our own workers
+        if isinstance(exc, Exception):
+            raise exc
+    raise backend_error(resp.backend or "unknown", resp.error or "preview worker error")
 
 
 PREVIEW_TIMEOUT = 10.0  # seconds until preview subprocess is killed
@@ -139,11 +133,7 @@ class _PreviewWorker:
 
         resp = msgspec.json.decode(meta_raw, type=PreviewResponse)
         if not resp.ok:
-            raise PreviewError(
-                resp.error or "preview worker error",
-                stderr=resp.stderr,
-                backend=resp.backend,
-            )
+            _reraise_worker_error(resp, payload)
         return payload or None, resp
 
     async def kill(self) -> None:
@@ -279,9 +269,9 @@ class _PreviewWorkerPool:
             )
             if not future.done():
                 future.set_exception(
-                    PreviewTimeoutError(
-                        args[0].name,
-                        backend=_expected_preview_backend(args[0]),
+                    preview_timeout_error(
+                        _expected_preview_backend(args[0]),
+                        PREVIEW_TIMEOUT,
                     )
                 )
             return
@@ -305,9 +295,9 @@ class _PreviewWorkerPool:
             )
             if not future.done():
                 future.set_exception(
-                    PreviewTimeoutError(
-                        filepath.name,
-                        backend=_expected_preview_backend(filepath),
+                    preview_timeout_error(
+                        _expected_preview_backend(filepath),
+                        PREVIEW_TIMEOUT,
                     )
                 )
         except WorkerChecksumError:
@@ -319,7 +309,10 @@ class _PreviewWorkerPool:
             )
             if not future.done():
                 future.set_exception(
-                    PreviewError(f"worker checksum mismatch for {filepath.name}")
+                    backend_error(
+                        _expected_preview_backend(filepath),
+                        f"worker checksum mismatch for {filepath.name}",
+                    )
                 )
         except PreviewError as e:
             if not future.done():
@@ -342,14 +335,20 @@ class _PreviewWorkerPool:
             )
             if not future.done():
                 future.set_exception(
-                    PreviewError(f"worker protocol failure for {filepath.name}: {e}")
+                    backend_error(
+                        _expected_preview_backend(filepath),
+                        f"worker protocol failure for {filepath.name}: {e}",
+                    )
                 )
         except Exception:
             replace = True
             logger.exception("Unexpected preview worker error for %s", filepath.name)
             if not future.done():
                 future.set_exception(
-                    PreviewError(f"unexpected worker error for {filepath.name}")
+                    backend_error(
+                        _expected_preview_backend(filepath),
+                        f"unexpected worker error for {filepath.name}",
+                    )
                 )
         finally:
             if replace:
@@ -378,7 +377,7 @@ class _PreviewWorkerPool:
         data: bytes | None = None,
     ):
         if self._closed:
-            raise PreviewPoolClosedError("preview worker pool closed")
+            raise preview_cancelled_error("preview worker pool closed")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._in_flight.add(future)
@@ -410,18 +409,14 @@ class _PreviewWorkerPool:
         # out their timeouts during server shutdown.
         for future in list(self._in_flight):
             if not future.done():
-                future.set_exception(
-                    PreviewPoolClosedError("preview worker pool closed")
-                )
+                future.set_exception(preview_cancelled_error("pool closed"))
         while not self._pending.empty():
             try:
                 _priority, _seq, future, _args = self._pending.get_nowait()
             except asyncio.QueueEmpty:
                 break
             if not future.done():
-                future.set_exception(
-                    PreviewPoolClosedError("preview worker pool closed")
-                )
+                future.set_exception(preview_cancelled_error("pool closed"))
         while not self._idle.empty():
             try:
                 self._idle.get_nowait()
@@ -469,7 +464,11 @@ async def shutdown_preview_workers() -> None:
 async def generate_office_preview(
     filepath: Path, quality: int, maxsize: int, maxzoom: float
 ) -> tuple[bytes | None, PreviewResponse | None]:
-    """Generate a preview for an office file using OnlyOffice + worker AVIF conversion."""
+    """Generate a preview for an office file using OnlyOffice + worker AVIF conversion.
+
+    Raises:
+        OnlyOfficeError: If the OnlyOffice Document Server cannot convert the file.
+    """
     manager = get_oo_manager()
     t_oo_start = perf_counter()
     png_bytes = await manager.convert(filepath)
@@ -490,5 +489,5 @@ async def run_preview(
     """Run preview request in a persistent worker process."""
     await start_preview_workers()
     if _preview_pool is None:
-        raise PreviewPoolClosedError("preview worker pool closed")
+        raise preview_cancelled_error("preview worker pool closed")
     return await _preview_pool.run(filepath, quality, maxsize, maxzoom, data)

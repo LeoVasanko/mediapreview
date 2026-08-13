@@ -17,12 +17,14 @@ from mediapreview.backends import (
     process_video,
 )
 from mediapreview.cache import CachedPreview, PreviewCache
+from mediapreview.exceptions import PreviewError
 from mediapreview.formats import is_previewable_path
 from mediapreview.protocol import PreviewRequest, PreviewResponse
 
 __all__ = [
     "CachedPreview",
     "PreviewCache",
+    "PreviewError",
     "PreviewRequest",
     "PreviewResponse",
     "dispatch",

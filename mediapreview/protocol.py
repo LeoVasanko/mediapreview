@@ -11,7 +11,7 @@ class PreviewRequest(msgspec.Struct, omit_defaults=True):
 
 
 class PreviewResponse(msgspec.Struct, omit_defaults=True):
-    ok: bool
+    ok: bool  # Indicates whether binary payload is the file or a pickled exception
     mime: str | None = None
     backend: str | None = None
     timings: list[float] | None = None

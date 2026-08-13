@@ -19,6 +19,7 @@ import contextlib
 import io
 import logging
 import os
+import pickle
 import signal
 import struct
 import sys
@@ -41,6 +42,18 @@ from mediapreview.protocol import PreviewRequest, PreviewResponse
 from mediapreview.util.logformat import format_level_prefix
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_exception(e: BaseException) -> bytes:
+    """Pickle an exception for re-raising across the pool wire.
+
+    Falls back to an empty payload (caller uses the plain error message) in
+    the unlikely case the exception cannot be pickled.
+    """
+    try:
+        return pickle.dumps(e)
+    except Exception:
+        return b""
 
 
 class _WorkerLogFormatter(logging.Formatter):
@@ -125,21 +138,17 @@ def _run_loop() -> None:
                 result, resp = dispatch(
                     Path(req.path), req.quality, req.maxsize, req.maxzoom, data
                 )
-            if not resp.ok:
-                captured = stderr_capture.getvalue().strip()
-                if captured:
-                    resp = PreviewResponse(
-                        ok=False,
-                        backend=resp.backend,
-                        error=resp.error,
-                        stderr=captured,
-                    )
             _write_response(resp, result or b"")
         except Exception as e:
             logger.exception("Preview worker error for %s", req.path)
             captured = stderr_capture.getvalue().strip()
             _write_response(
-                PreviewResponse(ok=False, error=str(e), stderr=captured or None), b""
+                PreviewResponse(
+                    ok=False,
+                    error=str(e),
+                    stderr=captured or None,
+                ),
+                _serialize_exception(e),
             )
         finally:
             root_logger.removeHandler(handler)

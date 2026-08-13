@@ -15,8 +15,8 @@ from mediapreview.backends.image import (
 )
 from mediapreview.backends.pdf import process_pdf
 from mediapreview.backends.video import process_video
+from mediapreview.exceptions import PreviewError, backend_error
 from mediapreview.formats import DOC_PREVIEW_SUFFIXES
-from mediapreview.protocol import PreviewResponse
 
 __all__ = [
     "dispatch",
@@ -49,13 +49,17 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
         if mime_type and mime_type.startswith("image/"):
             backend = "pyvips"
             return process_image(path, quality=quality, maxsize=maxsize)
+    except PreviewError:
+        # Already structured (e.g. a stage of a combined pipeline like
+        # pdf+pyvips) — keep the original backend/stage identity.
+        raise
     except ValueError as e:
-        return None, PreviewResponse(ok=False, backend=backend, error=str(e))
+        raise backend_error(backend, str(e)) from e
     except ImportError as e:
         # Missing optional extra — expected, so a plain message, no traceback.
         logger.error("Preview dispatch failed for %s: %s", path, e)  # noqa: TRY400
-        return None, PreviewResponse(ok=False, backend=backend, error=str(e))
+        raise backend_error(backend, str(e)) from e
     except Exception as e:
         logger.exception("Preview dispatch failed for %s", path)
-        return None, PreviewResponse(ok=False, backend=backend, error=str(e))
-    return None, PreviewResponse(ok=False, backend=backend, error="preview unsupported")
+        raise backend_error(backend, str(e)) from e
+    raise backend_error(backend, "preview unsupported")

@@ -31,6 +31,7 @@ from pathlib import Path
 from docopt import docopt
 
 from mediapreview.backends import dispatch
+from mediapreview.exceptions import PreviewError
 from mediapreview.util.logformat import EmojiFormatter
 
 
@@ -66,12 +67,16 @@ def _preview(args: dict) -> None:
         sys.stderr.write(f"error: no such file: {path}\n")
         sys.exit(2)
 
-    result, resp = dispatch(
-        path,
-        quality=int(args["-q"]),
-        maxsize=int(args["--maxsize"]),
-        maxzoom=float(args["--maxzoom"]),
-    )
+    try:
+        result, resp = dispatch(
+            path,
+            quality=int(args["-q"]),
+            maxsize=int(args["--maxsize"]),
+            maxzoom=float(args["--maxzoom"]),
+        )
+    except PreviewError as e:
+        sys.stderr.write(f"error: {e}\n")
+        sys.exit(1)
     if not resp.ok or result is None:
         sys.stderr.write(f"error: {resp.error or 'preview failed'}\n")
         if resp.stderr:
