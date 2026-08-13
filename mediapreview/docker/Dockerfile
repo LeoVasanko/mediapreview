@@ -36,16 +36,29 @@ RUN apt-get update -qq && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Clone the open-source server components (shallow, ~15 MB).
-# The master branch is used because the Linux/web tags are not published
-# in the server repo; the license.js file has been stable for years.
-RUN git clone --depth 1 https://github.com/ONLYOFFICE/server.git /opt/oo-server
+# Pin the open-source server components to a known-good commit (~15 MB).
+# The master branch is a moving target (the Linux/web tags are not published
+# in the server repo): a 2026 convertermaster change there detects community
+# edition as a "memory runtime" and forks NO converter workers, silently
+# breaking all conversions. Pinned to the commit proven in production.
+ARG ONLYOFFICE_SERVER_REF=4e56b8d056640557ffcd8c860a65535ab6cbd95b
+RUN git init /opt/oo-server && \
+    cd /opt/oo-server && \
+    git remote add origin https://github.com/ONLYOFFICE/server.git && \
+    git fetch --depth 1 origin "$ONLYOFFICE_SERVER_REF" && \
+    git checkout FETCH_HEAD
 
 # Patch license.js so the converter worker count is read from an env var
 # instead of being hardcoded to 1.
 RUN sed -i \
     's/count: 1,/count: parseInt(process.env.WORKERS, 10) || 8,/' \
     /opt/oo-server/Common/sources/license.js
+
+# Defense in depth: never take the "memory runtime" branch that forks no
+# converter workers, even if the pinned ref is bumped carelessly.
+RUN sed -i \
+    's/runtimeProfile\.isMemoryRuntime()/false \/* patched: always fork converter workers *\//g' \
+    /opt/oo-server/FileConverter/sources/convertermaster.js
 
 # Install npm dependencies for the modules the FileConverter touches.
 # DocService deps are also needed because converter.js pulls in baseConnector.

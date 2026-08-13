@@ -47,6 +47,11 @@ except ImportError:  # pragma: no cover - optional office extra
 
 logger = logging.getLogger(__name__)
 
+# Isolated docker network for the OnlyOffice container: internal-only (no
+# outbound internet), the container can only reach the host on this bridge.
+OO_NETWORK = "oonet"
+OO_SUBNET = "172.30.0.0/24"
+
 # ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
@@ -67,12 +72,41 @@ def _get_jwt_secret() -> str:
     return os.environ.get("ONLYOFFICE_JWT_SECRET", "")
 
 
+def _docker_network_gateway(network: str) -> str | None:
+    """Return the host-side gateway IP of a docker network, or None."""
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "network",
+                "inspect",
+                network,
+                "--format",
+                "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        gateway = result.stdout.strip()
+        if result.returncode == 0 and gateway:
+            return gateway
+    except Exception:
+        logger.debug("Failed to inspect docker network %s", network)
+    return None
+
+
 @lru_cache(maxsize=1)
 def _get_callback_host() -> str:
-    """Return the host IP that OnlyOffice (usually in Docker) can use to reach us."""
+    """Return the host IP that OnlyOffice (in Docker) can use to reach us."""
     if host := os.environ.get("ONLYOFFICE_CALLBACK_HOST"):
         return host
-    # Try to auto-detect docker bridge IP
+    # Prefer the gateway of the isolated network setup_docker() creates —
+    # this is the network the container is actually attached to.
+    if gateway := _docker_network_gateway(OO_NETWORK):
+        return gateway
+    # Fall back to the default docker bridge IP
     try:
         result = subprocess.run(
             ["/sbin/ip", "-4", "addr", "show", "docker0"],
@@ -182,6 +216,24 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str
     if result.returncode != 0:
         raise RuntimeError("Failed to build OnlyOffice image")
 
+    # Isolated network: internal-only, so the container has no outbound
+    # internet access and can only reach the host on this bridge (needed
+    # for the preview file callback). Already-exists is fine.
+    net_cmd = [
+        "docker",
+        "network",
+        "create",
+        "--internal",
+        "--subnet",
+        OO_SUBNET,
+        OO_NETWORK,
+    ]
+    result = subprocess.run(net_cmd, capture_output=True, check=False)  # noqa: S603
+    if result.returncode != 0 and b"already exists" not in result.stderr:
+        raise RuntimeError(
+            f"Failed to create docker network {OO_NETWORK}: {result.stderr.decode(errors='replace').strip()}"
+        )
+
     logger.info("Starting OnlyOffice container")
     run_cmd = [
         "docker",
@@ -189,6 +241,8 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str
         "-d",
         "-p",
         f"{port}:80",
+        "--network",
+        OO_NETWORK,
         "-e",
         f"JWT_SECRET={secret}",
         "-e",
@@ -204,6 +258,9 @@ def setup_docker(name: str = "onlyoffice-mediapreview", port: int = 8988) -> str
     if result.returncode != 0:
         raise RuntimeError("Failed to start OnlyOffice container")
     logger.info("OnlyOffice is running on http://localhost:%d", port)
+    logger.info(
+        "Callback host for file downloads: %s", _docker_network_gateway(OO_NETWORK)
+    )
     return secret
 
 
@@ -297,9 +354,14 @@ def _build_jwt_token(payload: dict) -> str | None:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-async def convert_to_png_async(file_path: Path, request_timeout: float = 5.0) -> bytes:
+async def convert_to_png_async(
+    file_path: Path, request_timeout: float = 7.0, download_timeout: float = 2.0
+) -> bytes:
     """Convert *file_path* to PNG using OnlyOffice Document Server (async).
 
+    With ``async: false`` the conversion itself runs inside the POST request,
+    so *request_timeout* must cover full conversion time. *download_timeout*
+    covers fetching the resulting one-page PNG, which is pure transfer.
     Returns the PNG bytes. Raises RuntimeError on failure.
     """
     if httpx is None or jwt is None:
@@ -367,10 +429,10 @@ async def convert_to_png_async(file_path: Path, request_timeout: float = 5.0) ->
 
         # Download converted PNG
         try:
-            png_response = await client.get(file_url, timeout=request_timeout)
+            png_response = await client.get(file_url, timeout=download_timeout)
             png_response.raise_for_status()
         except httpx.TimeoutException as e:
-            raise preview_timeout_error("onlyoffice", request_timeout) from e
+            raise preview_timeout_error("onlyoffice", download_timeout) from e
         except httpx.HTTPStatusError as e:
             raise onlyoffice_http_error(e.response.status_code) from e
         except httpx.RequestError as e:
@@ -391,12 +453,23 @@ async def convert_to_png_async(file_path: Path, request_timeout: float = 5.0) ->
 OO_MAX_CONCURRENT = max(2, min(8, cpu_count()))
 
 
+class _InFlight:
+    """A deduplicated conversion: shared future, its task, and waiter count."""
+
+    __slots__ = ("future", "task", "waiters")
+
+    def __init__(self, future: asyncio.Future[bytes], task: asyncio.Task[None]):
+        self.future = future
+        self.task = task
+        self.waiters = 0
+
+
 class OOConversionManager:
     """Manages async OnlyOffice conversions with deduplication and concurrency limits."""
 
     def __init__(self, max_concurrent: int = OO_MAX_CONCURRENT):
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._in_flight: dict[str, asyncio.Future[bytes]] = {}
+        self._in_flight: dict[str, _InFlight] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
 
@@ -408,31 +481,50 @@ class OOConversionManager:
         key = f"{filepath}:{stat.st_mtime_ns}"
 
         async with self._lock:
-            if key in self._in_flight:
-                future = self._in_flight[key]
-            else:
+            entry = self._in_flight.get(key)
+            if entry is None:
                 future = asyncio.get_running_loop().create_future()
-                self._in_flight[key] = future
                 task = asyncio.create_task(self._do_convert(filepath, key, future))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
+                entry = _InFlight(future, task)
+                self._in_flight[key] = entry
+            entry.waiters += 1
 
-        return await future
+        try:
+            # shield: one waiter's cancellation must not cancel the future
+            # shared with other waiters.
+            return await asyncio.shield(entry.future)
+        except asyncio.CancelledError:
+            # The caller hit the (strict) preview deadline or disconnected.
+            # When no other waiter remains, cancel the background task so it
+            # releases its semaphore slot and aborts the HTTP request instead
+            # of running orphaned and piling load onto OnlyOffice.
+            async with self._lock:
+                entry.waiters -= 1
+                orphan = entry.waiters == 0
+            if orphan:
+                entry.task.cancel()
+            raise
 
     async def _do_convert(
         self, filepath: Path, key: str, future: asyncio.Future[bytes]
     ) -> None:
         try:
             async with self._semaphore:
-                png_bytes = await convert_to_png_async(filepath, request_timeout=5.0)
+                png_bytes = await convert_to_png_async(filepath)
+        except asyncio.CancelledError:
+            # All waiters gave up; cancel the future so nothing hangs on it.
+            if not future.done():
+                future.cancel()
+            raise
         except Exception as e:
             if not future.done():
                 future.set_exception(e)
-            async with self._lock:
-                self._in_flight.pop(key, None)
         else:
             if not future.done():
                 future.set_result(png_bytes)
+        finally:
             async with self._lock:
                 self._in_flight.pop(key, None)
 
