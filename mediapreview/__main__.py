@@ -31,10 +31,18 @@ from pathlib import Path
 from docopt import docopt
 
 from mediapreview.backends import dispatch
+from mediapreview.util.logformat import EmojiFormatter
+
+
+def _configure_logging() -> None:
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(EmojiFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # pyvips is chatty at INFO ("threadpool completed ..." per operation).
+    logging.getLogger("pyvips").setLevel(logging.WARNING)
 
 
 def _oosetup(name: str, port: int) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         # Lazy import: keeps the base CLI free of office-extra concerns.
         from mediapreview.office import setup_docker  # noqa: PLC0415
@@ -84,6 +92,7 @@ def _preview(args: dict) -> None:
 
 
 def main() -> None:
+    _configure_logging()
     # docopt matches usage patterns in order, so `oosetup` would be swallowed
     # by the <path> pattern if it came second. Dispatch it before parsing;
     # the main help above still documents both modes.
