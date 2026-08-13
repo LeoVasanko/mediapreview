@@ -56,7 +56,7 @@ def _assert_ok(data, resp, backend: str | None = None) -> None:
 def test_process_image_exif_orientations(path: Path) -> None:
     """Every EXIF orientation fixture must produce a valid preview."""
     data, resp = process_image(path, maxsize=512, quality=60)
-    _assert_ok(data, resp, backend="pyvips")
+    _assert_ok(data, resp, backend="vips")
     assert resp.width in (1200, 1800)
     assert resp.height in (1200, 1800)
 
@@ -74,7 +74,7 @@ def test_process_image_pyvips() -> None:
     """The pyvips-only image backend works on a plain JPEG."""
     path = FILES / "Landscape_1.jpg"
     data, resp = process_image_pyvips(path, maxsize=512, quality=60)
-    _assert_ok(data, resp, backend="pyvips")
+    _assert_ok(data, resp, backend="vips")
 
 
 def test_process_image_buffer() -> None:
@@ -83,7 +83,7 @@ def test_process_image_buffer() -> None:
     data, resp = process_image_buffer(
         path.read_bytes(), maxsize=512, quality=60, maxzoom=2.0
     )
-    _assert_ok(data, resp, backend="pyvips")
+    _assert_ok(data, resp, backend="vips")
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def test_process_pdf() -> None:
         maxzoom=2.0,
         quality=60,
     )
-    _assert_ok(data, resp, backend="pdf+pyvips")
+    _assert_ok(data, resp, backend="pdf+vips")
     assert resp.width == 595
     assert resp.height == 842
 
@@ -138,9 +138,9 @@ def test_process_pdf() -> None:
 
 
 DISPATCH_FIXTURES = [
-    ("Landscape_1.jpg", "pyvips", 1800, 1200),
+    ("Landscape_1.jpg", "vips", 1800, 1200),
     ("sample-1mb.mp4", "video", 854, 480),
-    ("sample.pdf", "pdf+pyvips", 595, 842),
+    ("sample.pdf", "pdf+vips", 595, 842),
 ]
 
 

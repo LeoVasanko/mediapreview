@@ -90,5 +90,5 @@ def expected_backend(path: Path) -> str:
     if mime_type and mime_type.startswith("video/"):
         return "video"
     if mime_type and mime_type.startswith("image/"):
-        return "pyvips"
+        return "vips"
     return "preview"

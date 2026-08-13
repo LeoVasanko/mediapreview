@@ -17,9 +17,10 @@ The hierarchy is intentionally small:
 
 - ``OnlyOfficeError`` covers all OnlyOffice failures; optional fields
   (``code``, ``status``, ``url``, ``snippet``) describe the specific failure.
-- ``PreviewBackendError`` covers backend conversion failures (ffmpeg, pyvips,
-  pdf, etc.); ``stage`` identifies the failing step of a combined pipeline
-  (e.g. "pdf" vs "pyvips" in the "pdf+pyvips" backend).
+- ``PreviewBackendError`` covers backend conversion failures (ffmpeg, vips,
+  pdf, etc.). Combined pipelines report the failing step in ``backend``
+  (e.g. "pdf" if pdf reading failed before vips was reached, "pdf+vips"
+  for a vips write failure).
 - ``PreviewTimeoutError`` covers timeouts for any backend.
 - ``PreviewCancelledError`` covers cancellations (e.g. pool shutdown).
 
@@ -79,17 +80,6 @@ class OnlyOfficeError(PreviewError):
 
 class PreviewBackendError(PreviewError):
     """Backend conversion failure (image/video/pdf/etc)."""
-
-    def __init__(
-        self,
-        message: str = "preview failed",
-        short: str = "error",
-        *,
-        stage: str | None = None,
-        backend: str | None = None,
-    ):
-        super().__init__(message, short, backend=backend)
-        self.stage = stage
 
 
 class PreviewTimeoutError(PreviewError):
@@ -163,13 +153,12 @@ def onlyoffice_no_fileurl_error(snippet: str | None = None) -> OnlyOfficeError:
     return OnlyOfficeError(log, "no-fileurl error", snippet=snippet)
 
 
-def backend_error(backend: str, message: str, *, stage: str | None = None) -> PreviewBackendError:
+def backend_error(backend: str, message: str) -> PreviewBackendError:
     short = message.splitlines()[0][:60]
     return PreviewBackendError(
         f"[{backend}] preview failed: {message}",
         short,
         backend=backend,
-        stage=stage,
     )
 
 

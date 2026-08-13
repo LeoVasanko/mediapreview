@@ -1,4 +1,4 @@
-"""PDF/XPS/EPUB preview conversion via PyMuPDF + pyvips."""
+"""PDF/XPS/EPUB preview conversion via PyMuPDF + vips."""
 
 from time import perf_counter
 
@@ -13,7 +13,7 @@ try:
 except ImportError:  # pragma: no cover - optional pdf extra
     pymupdf = None
 
-BACKEND = "pdf+pyvips"
+BACKEND = "pdf+vips"
 
 
 def process_pdf(path, *, maxsize, maxzoom, quality, page_number=0):
@@ -31,7 +31,8 @@ def process_pdf(path, *, maxsize, maxzoom, quality, page_number=0):
             pix = page.get_pixmap(matrix=mat)
             samples, width, height, n = pix.samples_mv, pix.width, pix.height, pix.n
     except Exception as e:
-        raise backend_error(BACKEND, str(e), stage="pdf") from e
+        # vips was never reached — this is a plain pdf error.
+        raise backend_error("pdf", str(e)) from e
     t_load_end = perf_counter()
 
     t_save_start = perf_counter()
@@ -39,7 +40,7 @@ def process_pdf(path, *, maxsize, maxzoom, quality, page_number=0):
         img = pyvips.Image.new_from_memory(samples, width, height, n, "uchar")
         ret = img.write_to_buffer(".avif", Q=quality, effort=AVIF_FAST_EFFORT, keep="none")
     except Exception as e:
-        raise backend_error(BACKEND, str(e), stage="pyvips") from e
+        raise backend_error(BACKEND, str(e)) from e
     t_save_end = perf_counter()
 
     return ret, PreviewResponse(

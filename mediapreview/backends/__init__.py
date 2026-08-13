@@ -34,7 +34,7 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
     backend = "unknown"
     try:
         if data:
-            backend = "pyvips"
+            backend = "vips"
             return process_image_buffer(
                 data, quality=quality, maxsize=maxsize, maxzoom=maxzoom
             )
@@ -47,11 +47,11 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
             backend = "video"
             return process_video(path, quality=quality, maxsize=maxsize)
         if mime_type and mime_type.startswith("image/"):
-            backend = "pyvips"
+            backend = "vips"
             return process_image(path, quality=quality, maxsize=maxsize)
     except PreviewError:
-        # Already structured (e.g. a stage of a combined pipeline like
-        # pdf+pyvips) — keep the original backend/stage identity.
+        # Already structured (e.g. a failing stage of a combined pipeline
+        # like pdf+vips) — keep the original backend identity.
         raise
     except ValueError as e:
         raise backend_error(backend, str(e)) from e

@@ -477,7 +477,7 @@ async def generate_office_preview(
     img, resp = await run_preview(filepath, quality, maxsize, maxzoom, data=png_bytes)
 
     if resp is not None:
-        resp.backend = "onlyoffice+" + (resp.backend or "pyvips")
+        resp.backend = "onlyoffice+" + (resp.backend or "vips")
         if resp.timings:
             resp.timings = [round((t_oo_end - t_oo_start) * 1000, 1), *resp.timings]
     return img, resp

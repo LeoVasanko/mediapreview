@@ -64,11 +64,10 @@ def test_onlyoffice_no_fileurl_error():
     assert err.short == "no-fileurl error"
 
 
-def test_backend_error_stage():
-    """Combined pipelines tag the failing stage."""
-    err = backend_error("pdf+pyvips", "cannot read document", stage="pdf")
-    assert err.backend == "pdf+pyvips"
-    assert err.stage == "pdf"
+def test_backend_error_pipeline_backend():
+    """Combined pipelines report the failing step in the backend name."""
+    err = backend_error("pdf", "cannot read document")
+    assert err.backend == "pdf"
     assert err.short == "cannot read document"
     assert isinstance(err, PreviewBackendError)
 

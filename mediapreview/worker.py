@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover - optional worker extra
     sys.exit(1)
 
 from mediapreview.backends import dispatch
+from mediapreview.exceptions import PreviewError
 from mediapreview.protocol import PreviewRequest, PreviewResponse
 from mediapreview.util.logformat import format_level_prefix
 
@@ -140,7 +141,13 @@ def _run_loop() -> None:
                 )
             _write_response(resp, result or b"")
         except Exception as e:
-            logger.exception("Preview worker error for %s", req.path)
+            # PreviewError is an expected failure (broken input, missing
+            # extra, backend error) — a warning suffices. Tracebacks are
+            # reserved for internal errors we did not anticipate.
+            if isinstance(e, PreviewError):
+                logger.warning("Preview failed for %s: %s", req.path, e)
+            else:
+                logger.exception("Preview worker error for %s", req.path)
             captured = stderr_capture.getvalue().strip()
             _write_response(
                 PreviewResponse(

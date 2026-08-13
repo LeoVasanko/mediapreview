@@ -148,7 +148,7 @@ def process_image_pyvips(path, *, maxsize, quality):
         )
     except pyvips.error.Error as e:
         raise ValueError(f"cannot decode image: {e}") from e
-    backend = "pyvips"
+    backend = "vips"
     t_end = perf_counter()
 
     return ret, PreviewResponse(
@@ -181,7 +181,7 @@ def process_image_buffer(data: bytes, *, quality, maxsize, maxzoom):
     return ret, PreviewResponse(
         ok=True,
         mime="image/avif",
-        backend="pyvips",
+        backend="vips",
         timings=[round((t_end - t_start) * 1000, 1)],
         width=orig_w,
         height=orig_h,
