@@ -72,6 +72,15 @@ def test_backend_error_pipeline_backend():
     assert isinstance(err, PreviewBackendError)
 
 
+def test_backend_error_short_message_strips_source_and_detail():
+    """Backend messages like "source: summary: detail" become just the summary."""
+    err = backend_error(
+        "vips",
+        "pyvips: cannot decode image: unable to load from file b'/mnt/c/Users...",
+    )
+    assert err.short == "cannot decode image"
+
+
 def test_error_pickle_round_trip():
     """Exceptions survive pickling (the worker pool wire) intact."""
     err = onlyoffice_error_from_code("-8")

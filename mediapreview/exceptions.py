@@ -154,7 +154,15 @@ def onlyoffice_no_fileurl_error(snippet: str | None = None) -> OnlyOfficeError:
 
 
 def backend_error(backend: str, message: str) -> PreviewBackendError:
-    short = message.splitlines()[0][:60]
+    short = message.splitlines()[0]
+    # Many backend messages look like "source: summary: detail ...".
+    # Drop the source prefix and any trailing detail so the short label
+    # is usable in UIs with limited space.
+    if ": " in short:
+        short = short.split(": ", 1)[1]
+    if ": " in short:
+        short = short.split(": ", 1)[0]
+    short = short[:60]
     return PreviewBackendError(
         f"[{backend}] preview failed: {message}",
         short,
