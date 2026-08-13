@@ -65,16 +65,12 @@ _httpx_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_onlyoffice_url() -> str:
-    if url := os.environ.get(
-        "ONLYOFFICE_URL", os.environ.get("ONLYOFFICE_CISTA_URL")
-    ):
-        return url
-    # When the isolated network exists, the container is at its fixed IP and
-    # no localhost port is published (Docker discards ports on internal
-    # networks). Otherwise assume a legacy setup with a published port.
-    if _docker_network_gateway(OO_NETWORK):
-        return f"http://{OO_CONTAINER_IP}"
-    return "http://localhost:8988"
+    # The container runs on the isolated oonet network at a fixed IP; the
+    # host is the bridge gateway and reaches it directly, no published port.
+    return os.environ.get(
+        "ONLYOFFICE_URL",
+        os.environ.get("ONLYOFFICE_CISTA_URL", f"http://{OO_CONTAINER_IP}"),
+    )
 
 
 def _get_jwt_secret() -> str:
