@@ -15,8 +15,8 @@ try:
     import av
     import numpy as np
 except ImportError:  # pragma: no cover - optional video extra
-    av = None
-    np = None
+    av = None  # type: ignore[assignment]
+    np = None  # type: ignore[assignment]
 
 
 def _rotate_frame_yuv(frame, k):
@@ -78,21 +78,22 @@ def process_video(path, *, maxsize, quality):
         istream.codec_context.skip_frame = "NONKEY"
         icontainer.seek((icontainer.duration or 0) // 8)
         for frame in icontainer.decode(istream):
-            if frame.dts is not None:
+            if frame.dts is not None or frame.pts is not None:
                 break
         else:
             raise RuntimeError("No frames found in video")
 
-        # Resize frame to thumbnail size
+        # Resize frame to thumbnail size. Keep dimensions even for planar
+        # 4:2:0 chroma subsampling, which _rotate_frame_yuv expects.
         # Capture display dimensions before resize (accounting for rotation)
         disp_w = frame.width
         disp_h = frame.height
-        if frame.rotation in (90, 270):
+        if abs(frame.rotation) in (90, 270):
             disp_w, disp_h = disp_h, disp_w
         if frame.width > maxsize or frame.height > maxsize:
             scale_factor = min(maxsize / frame.width, maxsize / frame.height)
-            new_width = int(frame.width * scale_factor)
-            new_height = int(frame.height * scale_factor)
+            new_width = int(frame.width * scale_factor) // 2 * 2
+            new_height = int(frame.height * scale_factor) // 4 * 4
             frame = frame.reformat(width=new_width, height=new_height)
 
         # Apply display-matrix rotation if present
