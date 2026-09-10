@@ -283,32 +283,65 @@ async def is_available_cached() -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _TempServer(socketserver.TCPServer):
+    """TCPServer that logs handler errors instead of dumping tracebacks to stderr."""
+
+    daemon_threads = True
+    oo_fetched: bool
+
+    def handle_error(self, request, client_address) -> None:  # noqa: ARG002
+        # Dropped connections (client disconnects mid-request, port scanners)
+        # are routine noise; socketserver's default prints a full traceback.
+        logger.debug("Temp file server: error from %s", client_address)
+
+
 class _QuietHandler(SimpleHTTPRequestHandler):
+    server: _TempServer
+
     def log_message(self, fmt, *args) -> None:
         # Any request logged here means a client (OnlyOffice) connected to
         # fetch the file; record it for timeout diagnostics.
         self.server.oo_fetched = True
 
 
-def _get_free_port() -> int:
+def _get_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("0.0.0.0", 0))  # noqa: S104
+        s.bind((host, 0))
         return s.getsockname()[1]
 
 
-def _serve_file_temporarily(file_path: Path):
-    """Start a temporary HTTP server for *file_path* and return (url, server)."""
+def _serve_file_temporarily(file_path: Path, max_lifetime: float = 60.0):
+    """Start a temporary HTTP server for *file_path* and return (url, server).
+
+    The server binds only to the callback host address (the docker bridge
+    gateway by default), not 0.0.0.0, so it is unreachable from the internet.
+    It shuts itself down shortly after the file has been fetched, or when
+    *max_lifetime* elapses, so a hung OnlyOffice request cannot leave the
+    port open indefinitely.
+    """
     directory = str(file_path.parent)
     filename = file_path.name
-    port = _get_free_port()
+    host = _get_callback_host()
+    port = _get_free_port(host)
 
     handler = partial(_QuietHandler, directory=directory)
-    httpd = socketserver.TCPServer(("0.0.0.0", port), handler)  # noqa: S104
+    httpd = _TempServer((host, port), handler)
     httpd.oo_fetched = False
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
 
-    host = _get_callback_host()
+    def _watchdog() -> None:
+        deadline = perf_counter() + max_lifetime
+        while perf_counter() < deadline and not httpd.oo_fetched:
+            threading.Event().wait(0.1)
+        if httpd.oo_fetched:
+            # Brief grace so the in-flight response finishes transferring.
+            threading.Event().wait(2.0)
+        httpd.shutdown()
+        httpd.server_close()
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+
     url = f"http://{host}:{port}/{quote(filename)}"
     return url, httpd
 
@@ -343,8 +376,12 @@ async def convert_to_png_async(
     convert_url = f"{oo_url}/ConvertService.ashx"
     client = get_httpx_client()
 
-    # Start temporary HTTP server so OnlyOffice can fetch the file
-    doc_url, httpd = await asyncio.to_thread(_serve_file_temporarily, file_path)
+    # Start temporary HTTP server so OnlyOffice can fetch the file. The
+    # watchdog lifetime covers the full conversion plus slack so a hung
+    # conversion cannot leave the port open forever.
+    doc_url, httpd = await asyncio.to_thread(
+        _serve_file_temporarily, file_path, request_timeout + 30.0
+    )
     try:
         suffix = file_path.suffix.lstrip(".").lower()
         payload = {
@@ -415,6 +452,7 @@ async def convert_to_png_async(
         return png_response.content
     finally:
         await asyncio.to_thread(httpd.shutdown)
+        await asyncio.to_thread(httpd.server_close)
 
 
 # ---------------------------------------------------------------------------
