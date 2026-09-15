@@ -5,6 +5,7 @@ plus quality/size parameters and returning `(avif_bytes, PreviewResponse)`.
 `dispatch` picks the right backend for a path.
 """
 
+import asyncio
 import logging
 import mimetypes
 
@@ -16,7 +17,7 @@ from mediapreview.backends.image import (
 from mediapreview.backends.pdf import process_pdf
 from mediapreview.backends.video import process_video
 from mediapreview.exceptions import PreviewError, backend_error
-from mediapreview.formats import DOC_PREVIEW_SUFFIXES
+from mediapreview.formats import DOC_PREVIEW_SUFFIXES, OFFICE_PREVIEW_SUFFIXES
 
 __all__ = [
     "dispatch",
@@ -42,6 +43,42 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
         if suffix in DOC_PREVIEW_SUFFIXES:
             backend = "pdf"
             return process_pdf(path, quality=quality, maxsize=maxsize, maxzoom=maxzoom)
+        if suffix in OFFICE_PREVIEW_SUFFIXES:
+            backend = "onlyoffice"
+            try:
+                from mediapreview.office import (  # noqa: PLC0415
+                    close_oo_client,
+                    get_oo_manager,
+                )
+            except ImportError as e:
+                raise ImportError(
+                    "Office document previews require the 'office' extra:"
+                    " pip install mediapreview[office]"
+                ) from e
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # no event loop, asyncio.run() is safe
+            else:
+                raise RuntimeError(
+                    "Office preview via dispatch() cannot be called inside a running"
+                    " event loop; use mediapreview.pool.generate_office_preview() instead"
+                )
+
+            async def _convert_office() -> bytes:
+                manager = get_oo_manager()
+                try:
+                    return await manager.convert(path)
+                finally:
+                    await close_oo_client()
+
+            png_bytes = asyncio.run(_convert_office())
+            result, resp = process_image_buffer(
+                png_bytes, quality=quality, maxsize=maxsize, maxzoom=maxzoom
+            )
+            if resp is not None:
+                resp.backend = "onlyoffice+" + (resp.backend or "vips")
+            return result, resp
         mime_type, _ = mimetypes.guess_type(path.name)
         if mime_type and mime_type.startswith("video/"):
             backend = "video"
@@ -62,4 +99,6 @@ def dispatch(path, quality, maxsize, maxzoom, data=None):
     except Exception as e:
         logger.exception("Preview dispatch failed for %s", path)
         raise backend_error(backend, str(e)) from e
-    raise backend_error(backend, "preview unsupported")
+    if not suffix:
+        raise backend_error(backend, "unknown file type: no file extension")
+    raise backend_error(backend, f"unknown file extension: {suffix!r}")

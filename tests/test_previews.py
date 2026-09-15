@@ -28,6 +28,7 @@ from mediapreview.backends.image import (
 )
 from mediapreview.backends.pdf import process_pdf
 from mediapreview.backends.video import process_video
+from mediapreview.exceptions import PreviewBackendError
 from mediapreview.office import is_available_async
 from mediapreview.pool import generate_office_preview
 
@@ -157,6 +158,51 @@ def test_dispatch(
     _assert_ok(data, resp, backend=backend)
     assert resp.width == expected_width
     assert resp.height == expected_height
+
+
+def test_dispatch_office(monkeypatch) -> None:
+    """dispatch() converts office documents via OnlyOffice when called directly."""
+    fake_png = (FILES / "Landscape_1.jpg").read_bytes()
+
+    class _FakeManager:
+        async def convert(self, filepath: Path) -> bytes:
+            assert filepath == FILES / "file-sample_100kB.docx"
+            return fake_png
+
+    async def _noop() -> None:
+        return None
+
+    monkeypatch.setattr("mediapreview.office.get_oo_manager", _FakeManager)
+    monkeypatch.setattr("mediapreview.office.close_oo_client", _noop)
+
+    data, resp = dispatch(
+        FILES / "file-sample_100kB.docx",
+        quality=60,
+        maxsize=512,
+        maxzoom=2.0,
+    )
+    _assert_ok(data, resp)
+    assert resp.backend == "onlyoffice+vips"
+
+
+def test_dispatch_unknown_extension(tmp_path: Path) -> None:
+    """Unsupported extensions produce a diagnostic naming the extension."""
+    path = tmp_path / "unknown-file.xyz"
+    path.write_text("not a previewable file")
+    with pytest.raises(PreviewBackendError) as exc_info:
+        dispatch(path, quality=60, maxsize=512, maxzoom=2.0)
+    assert "unknown file extension: '.xyz'" in str(exc_info.value)
+    assert exc_info.value.backend == "unknown"
+
+
+def test_dispatch_no_extension(tmp_path: Path) -> None:
+    """Files without an extension produce a diagnostic saying so."""
+    path = tmp_path / "unknown-file-no-ext"
+    path.write_text("not a previewable file")
+    with pytest.raises(PreviewBackendError) as exc_info:
+        dispatch(path, quality=60, maxsize=512, maxzoom=2.0)
+    assert "unknown file type: no file extension" in str(exc_info.value)
+    assert exc_info.value.backend == "unknown"
 
 
 # ---------------------------------------------------------------------------

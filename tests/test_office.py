@@ -98,7 +98,11 @@ async def test_generate_office_preview_raises_structured_error(monkeypatch):
     async def fake_convert(_filepath: Path, request_timeout: float = 5.0) -> bytes:
         raise onlyoffice_error_from_code("-8")
 
+    async def fake_available() -> bool:
+        return True
+
     monkeypatch.setattr(office, "convert_to_png_async", fake_convert)
+    monkeypatch.setattr(office, "is_available_cached", fake_available)
 
     with pytest.raises(OnlyOfficeError) as exc_info:
         await generate_office_preview(
