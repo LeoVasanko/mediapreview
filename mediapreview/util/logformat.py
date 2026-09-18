@@ -31,3 +31,18 @@ class EmojiFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         return format_level_prefix(record.levelno) + record.getMessage()
+
+
+def quiet_vips_logging() -> None:
+    """Silence libvips per-operation chatter without hiding deprecations.
+
+    pyvips redirects every GLib message ("VIPS: threadpool completed ...")
+    onto the ``pyvips`` logger at INFO; cap that logger at WARNING. pyvips's
+    own diagnostics (e.g. deprecated-argument notices) are logged on the
+    ``pyvips.voperation`` child logger and stay at the default INFO.
+
+    Opt-in: applications that want quiet vips output call this once during
+    their own logging setup. mediapreview never calls it on import.
+    """
+    logging.getLogger("pyvips").setLevel(logging.WARNING)
+    logging.getLogger("pyvips.voperation").setLevel(logging.INFO)

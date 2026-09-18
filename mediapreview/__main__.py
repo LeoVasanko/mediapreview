@@ -32,15 +32,14 @@ from docopt import docopt
 
 from mediapreview.backends import dispatch
 from mediapreview.exceptions import PreviewError
-from mediapreview.util.logformat import EmojiFormatter
+from mediapreview.util.logformat import EmojiFormatter, quiet_vips_logging
 
 
 def _configure_logging() -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(EmojiFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    # pyvips is chatty at INFO ("threadpool completed ..." per operation).
-    logging.getLogger("pyvips").setLevel(logging.WARNING)
+    quiet_vips_logging()
 
 
 def _oosetup(name: str) -> None:
