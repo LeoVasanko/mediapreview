@@ -29,7 +29,9 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def _find_box(data: bytearray, box_type: bytes, start: int = 0, end: int | None = None) -> int:
+def _find_box(
+    data: bytearray, box_type: bytes, start: int = 0, end: int | None = None
+) -> int:
     end = end or len(data)
     i = start
     while i + 8 <= end:
@@ -42,7 +44,9 @@ def _find_box(data: bytearray, box_type: bytes, start: int = 0, end: int | None 
         if size == 1:
             size = int.from_bytes(data[i + 8 : i + 16], "big")
         if size < 8:
-            raise ValueError(f"Invalid box size {size} for {btype.decode('ascii', errors='replace')}")
+            raise ValueError(
+                f"Invalid box size {size} for {btype.decode('ascii', errors='replace')}"
+            )
         i += size
     return -1
 
@@ -88,8 +92,8 @@ def _patch_tkhd_rotation(in_path: Path, out_path: Path, degrees: int) -> None:
             matrix_offset = tkhd_idx + 48
             matrix = _matrix_90_cw() if degrees == 90 else _matrix_270_cw()
             for i, val in enumerate(matrix):
-                data[matrix_offset + i * 4 : matrix_offset + (i + 1) * 4] = val.to_bytes(
-                    4, "big", signed=True
+                data[matrix_offset + i * 4 : matrix_offset + (i + 1) * 4] = (
+                    val.to_bytes(4, "big", signed=True)
                 )
             out_path.write_bytes(data)
             return

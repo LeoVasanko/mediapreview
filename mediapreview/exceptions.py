@@ -145,7 +145,9 @@ def onlyoffice_unavailable_error(url: str | None = None) -> OnlyOfficeError:
 
 
 def onlyoffice_http_error(status: int) -> OnlyOfficeError:
-    return OnlyOfficeError(f"OnlyOffice HTTP error: {status}", "http error", status=status)
+    return OnlyOfficeError(
+        f"OnlyOffice HTTP error: {status}", "http error", status=status
+    )
 
 
 def onlyoffice_no_fileurl_error(snippet: str | None = None) -> OnlyOfficeError:
@@ -191,4 +193,6 @@ def preview_timeout_error(
 
 
 def preview_cancelled_error(reason: str = "pool closed") -> PreviewCancelledError:
-    return PreviewCancelledError(f"Preview cancelled ({reason})", "cancelled", reason=reason)
+    return PreviewCancelledError(
+        f"Preview cancelled ({reason})", "cancelled", reason=reason
+    )

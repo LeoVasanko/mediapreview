@@ -38,7 +38,9 @@ def process_pdf(path, *, maxsize, maxzoom, quality, page_number=0):
     t_save_start = perf_counter()
     try:
         img = pyvips.Image.new_from_memory(samples, width, height, n, "uchar")
-        ret = img.write_to_buffer(".avif", Q=quality, effort=AVIF_FAST_EFFORT, keep="none")
+        ret = img.write_to_buffer(
+            ".avif", Q=quality, effort=AVIF_FAST_EFFORT, keep="none"
+        )
     except Exception as e:
         raise backend_error(BACKEND, str(e)) from e
     t_save_end = perf_counter()

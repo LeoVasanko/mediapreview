@@ -32,14 +32,13 @@ from docopt import docopt
 
 from mediapreview.backends import dispatch
 from mediapreview.exceptions import PreviewError
-from mediapreview.util.logformat import EmojiFormatter, quiet_vips_logging
+from mediapreview.util.logformat import EmojiFormatter
 
 
 def _configure_logging() -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(EmojiFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    quiet_vips_logging()
 
 
 def _oosetup(name: str) -> None:

@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - optional worker extra
 from mediapreview.backends import dispatch
 from mediapreview.exceptions import PreviewError
 from mediapreview.protocol import PreviewRequest, PreviewResponse
-from mediapreview.util.logformat import format_level_prefix, quiet_vips_logging
+from mediapreview.util.logformat import format_level_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +171,6 @@ def main() -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_WorkerLogFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    quiet_vips_logging()
     # NOTE: standalone package no longer depends on cista config loading.
     # Consumers can load their own configuration before starting workers.
     if len(sys.argv) > 1:

@@ -107,7 +107,9 @@ VIDEO_FIXTURES = [
     VIDEO_FIXTURES,
     ids=[f[0] for f in VIDEO_FIXTURES],
 )
-def test_process_video(filename: str, expected_width: int, expected_height: int) -> None:
+def test_process_video(
+    filename: str, expected_width: int, expected_height: int
+) -> None:
     """SDR and HDR video clips, with and without rotation, convert successfully."""
     data, resp = process_video(FILES / filename, maxsize=512, quality=60)
     _assert_ok(data, resp, backend="video")

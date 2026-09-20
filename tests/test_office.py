@@ -95,6 +95,7 @@ def test_error_pickle_round_trip():
 @pytest.mark.asyncio
 async def test_generate_office_preview_raises_structured_error(monkeypatch):
     """On OnlyOffice failure, generate_office_preview raises OnlyOfficeError."""
+
     async def fake_convert(_filepath: Path, request_timeout: float = 5.0) -> bytes:
         raise onlyoffice_error_from_code("-8")
 

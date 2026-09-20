@@ -9,6 +9,9 @@ from time import perf_counter
 import pyvips
 
 from mediapreview.protocol import PreviewResponse
+from mediapreview.util.logformat import quiet_vips_logging
+
+quiet_vips_logging()
 
 AVIF_FAST_EFFORT = 0
 
